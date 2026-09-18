@@ -1,0 +1,58 @@
+{
+  "description": "Deterministic YantrikDB recall and capture for Codex and ChatGPT sessions.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run.sh\" session_start.py",
+            "timeout": 30,
+            "additionalContextLimit": 8000,
+            "statusMessage": "Loading YantrikDB digest..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run.sh\" user_prompt_submit.py",
+            "timeout": 30,
+            "additionalContextLimit": 8000,
+            "statusMessage": "Recalling from YantrikDB..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run.sh\" capture.py PreCompact",
+            "timeout": 120,
+            "statusMessage": "Capturing memory before compaction..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "other",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run.sh\" capture.py SessionEnd",
+            "timeout": 120,
+            "statusMessage": "Consolidating YantrikDB memory..."
+          }
+        ]
+      }
+    ]
+  }
+}

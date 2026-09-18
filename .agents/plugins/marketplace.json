@@ -1,0 +1,20 @@
+{
+  "name": "yantrikdb-chatgpt",
+  "interface": {
+    "displayName": "YantrikDB for Codex and ChatGPT"
+  },
+  "plugins": [
+    {
+      "name": "yantrikdb-chatgpt",
+      "source": {
+        "source": "local",
+        "path": "./plugins/yantrikdb-chatgpt"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
