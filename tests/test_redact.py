@@ -9,7 +9,7 @@ class RedactTests(unittest.TestCase):
 
     def test_known_secrets_are_masked(self):
         cases = (
-            "token=ydb_b427b6b03ee9bd45994180816bb2ebcae1b78f58293fb76cac41b6fd0d2303af",
+            "token=ydb_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
             "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
             "postgres://user:s3cretpassword@db.example.com/app",
@@ -17,6 +17,21 @@ class RedactTests(unittest.TestCase):
         )
         for value in cases:
             self.assertIn("[redacted", self.redact.redact(value), value)
+
+    def test_oauth_codes_and_tokens_are_masked(self):
+        cases = {
+            "http://localhost:1/?state=BKZmldtWuKQARBVuymiy&iss=https://accounts.google.com&code=4/0AXlqoi6mfZ8khB6jehDKnWG&scope=email":
+                ("BKZmldtWuKQARBVuymiy", "0AXlqoi6mfZ8khB6jehDKnWG"),
+            "paste the code 4/0AVGzR1Bc3dEfGhIjKlMnOpQrStUvWxYz here": ("0AVGzR1Bc3dEfGhIjKlMnOpQrStUvWxYz",),
+            "access_token=ya29.a0AfH6SMBx3yZ9QWERTYuiopasdfgh refresh_token: 1//0gLmNoPqRsTuVwXyZ12345":
+                ("ya29.a0AfH6SMBx3yZ9QWERTYuiopasdfgh", "1//0gLmNoPqRsTuVwXyZ12345"),
+            "client_secret=GOCSPX-abcdefghijklmnop": ("GOCSPX-abcdefghijklmnop",),
+        }
+        for text, secrets in cases.items():
+            out = self.redact.redact(text)
+            for secret in secrets:
+                self.assertNotIn(secret, out, text)
+        self.assertIn("accounts.google.com", self.redact.redact(next(iter(cases))))
 
     def test_normal_text_and_git_sha_survive(self):
         text = "Postgres 16 at commit 3f786850e387550fdab836ed7e6dc881de23001b."

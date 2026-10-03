@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
+import relevance  # noqa: E402
 import ydb  # noqa: E402
 
 EVENT = "SessionStart"
@@ -50,7 +51,25 @@ def _bullets(rows, keys, cap: int) -> list[str]:
     return out
 
 
+def _maintenance() -> bool:
+    """Conflict rid pairs, trigger counts and past prompts gave the model
+    nothing it could act on in four weeks of sessions, so they are opt-in."""
+    return ydb.env_flag("YANTRIKDB_HOOKS_DIGEST_MAINTENANCE", False)
+
+
+def _live_decisions(rows) -> list:
+    excluded = relevance.config()["excluded"]
+    live = [
+        row for row in rows or []
+        if isinstance(row, dict) and not row.get("superseded_by")
+        and not relevance.noise_reason(row, include_captured=True, excluded=excluded)
+    ]
+    return live[: ydb.env_int("YANTRIKDB_HOOKS_DIGEST_DECISIONS", 5)]
+
+
 def render_recent(rows, label: str, namespace: str) -> str:
+    cfg = relevance.config()
+    rows = relevance.filter_hits(rows, include_captured=cfg["include_captured"], excluded=cfg["excluded"])
     bullets = _bullets(rows, ("text",), ydb.env_int("YANTRIKDB_HOOKS_RECENT", 6))
     if not bullets:
         return ""
@@ -72,16 +91,15 @@ def render(digest: dict) -> str:
     elif isinstance(head, str) and head.strip():
         lines.append(f"Where things stood: {' '.join(head.split())}")
 
-    sections = (
-        ("Open decisions and high-signal memories", digest.get("top_decisions"), ("snippet",)),
-        ("Unresolved contradictions", digest.get("open_conflicts"), ("summary", "reason")),
-        ("Maintenance triggers pending", digest.get("pending_triggers"), ("reason",)),
-        (
-            "Known gaps",
-            digest.get("knowledge_gaps") or digest.get("gaps"),
-            ("query",),
-        ),
-    )
+    sections = [
+        ("Open decisions and high-signal memories", _live_decisions(digest.get("top_decisions")), ("snippet",)),
+    ]
+    if _maintenance():
+        sections += [
+            ("Unresolved contradictions", digest.get("open_conflicts"), ("summary", "reason")),
+            ("Maintenance triggers pending", digest.get("pending_triggers"), ("reason",)),
+            ("Known gaps", digest.get("knowledge_gaps") or digest.get("gaps"), ("query",)),
+        ]
     for title, rows, keys in sections:
         bullets = _bullets(rows, keys, MAX_ITEMS)
         if bullets:
@@ -99,15 +117,17 @@ def render(digest: dict) -> str:
 
 def fetch_digest(db, namespace: str) -> dict:
     namespace_arg = None if namespace == "default" else namespace
+    extra = MAX_ITEMS if _maintenance() else 1
     kwargs = {
         "namespace": namespace_arg,
         "narrative_namespace": namespace_arg,
-        "max_decisions": MAX_ITEMS,
-        "max_conflicts": MAX_ITEMS,
-        "max_triggers": MAX_ITEMS,
+        # Headroom for the superseded / excluded rows dropped in render().
+        "max_decisions": 2 * ydb.env_int("YANTRIKDB_HOOKS_DIGEST_DECISIONS", 5),
+        "max_conflicts": extra,
+        "max_triggers": extra,
     }
     if ydb.is_http(db):
-        kwargs["include_gaps"] = ydb.env_flag("YANTRIKDB_HOOKS_GAPS", True)
+        kwargs["include_gaps"] = ydb.env_flag("YANTRIKDB_HOOKS_GAPS", _maintenance())
     try:
         return ydb.as_obj(ydb.flex(db.session_digest, **kwargs))
     except Exception as error:

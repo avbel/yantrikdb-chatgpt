@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
 import redact  # noqa: E402
+import relevance  # noqa: E402
 import ydb  # noqa: E402
 
 EVENT = "UserPromptSubmit"
@@ -20,10 +21,12 @@ def _value(row, key, default=None):
     return getattr(row, key, default)
 
 
-def render_hits(hits, seen: list, floor: float) -> tuple[list[str], list[str]]:
+def render_hits(hits, seen: list, floor: float, limit: int | None = None) -> tuple[list[str], list[str]]:
     lines: list[str] = []
     fresh: list[str] = []
     for row in hits or []:
+        if limit is not None and len(lines) >= limit:
+            break
         rid = _value(row, "rid") or _value(row, "id")
         score = _value(row, "score", 0.0) or 0.0
         text = (_value(row, "text") or _value(row, "snippet") or "").strip()
@@ -39,6 +42,14 @@ def render_hits(hits, seen: list, floor: float) -> tuple[list[str], list[str]]:
         note = ydb.is_weak(_value(row, "why_retrieved") or "")
         lines.append(f"- {text}" + (f"  [weak: {note}]" if note else ""))
     return lines, fresh
+
+
+def select_lines(hits, seen: list) -> tuple[list[str], list[str]]:
+    """Captured prompts, other agents' namespaces and hits without a real
+    semantic match are dropped (see relevance.py) before the top-k cut."""
+    kept = relevance.filter_hits(hits, **relevance.config())
+    return render_hits(kept, seen, ydb.env_float("YANTRIKDB_HOOKS_MIN_SCORE", 0.10),
+                       limit=ydb.env_int("YANTRIKDB_HOOKS_TOP_K", 3))
 
 
 def main() -> None:
@@ -62,10 +73,11 @@ def main() -> None:
         ydb.emit()
 
     try:
-        hits = ydb.flex(
-            db.recall,
+        hits = ydb.recall_rows(
+            db,
             query=" ".join(prompt.split())[:400],
-            top_k=ydb.env_int("YANTRIKDB_HOOKS_TOP_K", 5),
+            # Over-fetch: the relevance gate usually discards most raw hits.
+            top_k=ydb.env_int("YANTRIKDB_HOOKS_CANDIDATES", 10),
             namespace=None if namespace == "default" else namespace,
             expand_entities=True,
             min_score_ratio=0.55,
@@ -88,10 +100,18 @@ def main() -> None:
 
     state = ydb.read_state(session_id)
     seen = list(state.get("injected_rids") or [])
-    lines, fresh = render_hits(
-        hits, seen, ydb.env_float("YANTRIKDB_HOOKS_MIN_SCORE", 0.10)
-    )
+    lines, fresh = select_lines(hits, seen)
+    if ydb.env_flag("YANTRIKDB_HOOKS_DEBUG", False):
+        cfg = relevance.config()
+        verdicts = [
+            ((_value(h, "rid") or "?")[:8],
+             relevance.noise_reason(h, include_captured=cfg["include_captured"], excluded=cfg["excluded"]),
+             relevance.semantic_similarity(_value(h, "why_retrieved")))
+            for h in hits or []
+        ]
+        ydb.log(f"recall verdicts (rid, noise, similarity): {verdicts}")
     if not lines:
+        ydb.log(f"recall: nothing relevant among {len(hits or [])} hits")
         ydb.emit()
     ydb.write_state(session_id, injected_rids=ydb.merge_rids(seen, fresh))
     body = (

@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import time
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,9 @@ class LifecycleTests(unittest.TestCase):
             YANTRIKDB_EMBEDDER="bundled",
             YANTRIKDB_HOOKS_NAMESPACE="default",
             YANTRIKDB_HOOKS_DEBUG="1",
+            YANTRIKDB_HOOKS_CAPTURE=None,
+            YANTRIKDB_HOOKS_MIN_SIMILARITY=None,
+            YANTRIKDB_HOOKS_DETACH_SESSION_END=None,
         ):
             transcript = root / "rollout.jsonl"
             write_transcript(transcript)
@@ -47,9 +51,16 @@ class LifecycleTests(unittest.TestCase):
             self.assertIsNone(output)
             self.assertTrue((Path(os.environ["PLUGIN_DATA"]) / "thread-1.json").exists())
 
-            output, error = run_hook(
-                "capture.py", {**base, "hook_event_name": "PreCompact", "trigger": "auto"}, "PreCompact"
-            )
+            pre_compact = {**base, "hook_event_name": "PreCompact", "trigger": "auto"}
+            output, error = run_hook("capture.py", pre_compact, "PreCompact")
+            self.assertIsNone(output)
+            self.assertIn("capture(PreCompact) disabled", error, "capture is opt-in")
+
+            os.environ["YANTRIKDB_HOOKS_CAPTURE"] = "1"
+            # A two-record store is matched through the keyword lane only; the
+            # engine annotates no semantic similarity, so the gate is off here.
+            os.environ["YANTRIKDB_HOOKS_MIN_SIMILARITY"] = "0"
+            output, error = run_hook("capture.py", pre_compact, "PreCompact")
             self.assertIsNone(output)
             self.assertIn("drafted", error)
             self.assertNotIn("Repository instructions", error)
@@ -62,12 +73,20 @@ class LifecycleTests(unittest.TestCase):
             context = output["hookSpecificOutput"]["additionalContext"]
             self.assertTrue("Postgres" in context or "Dokploy" in context, context)
 
+            state = Path(os.environ["PLUGIN_DATA"]) / "thread-1.json"
+            started = time.monotonic()
             output, error = run_hook(
                 "capture.py", {**base, "hook_event_name": "SessionEnd", "reason": "other"}, "SessionEnd"
             )
             self.assertIsNone(output)
-            self.assertIn("skipped: 0 new chars", error)
-            self.assertFalse((Path(os.environ["PLUGIN_DATA"]) / "thread-1.json").exists())
+            self.assertIn("SessionEnd work detached", error)
+            self.assertLess(time.monotonic() - started, 3.0, "must return inside the Codex 3 s clamp")
+            deadline = time.monotonic() + 60
+            while state.exists() and time.monotonic() < deadline:
+                time.sleep(0.2)
+            self.assertFalse(state.exists(), "the detached child closes the session and drops state")
+            log = (Path(os.environ["PLUGIN_DATA"]) / "session-end.log").read_text()
+            self.assertIn("skipped: 0 new chars", log, "watermark prevents re-drafting")
 
 
 if __name__ == "__main__":

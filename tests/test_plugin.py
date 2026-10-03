@@ -25,6 +25,11 @@ class PluginTests(unittest.TestCase):
         ]
         self.assertTrue(all("${PLUGIN_ROOT}" in command for command in commands))
 
+    def test_session_end_fires_for_every_exit_reason(self):
+        # A matcher of "other" left sessions ended by /exit or clear open on the server.
+        hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
+        self.assertTrue(all("matcher" not in group for group in hooks["SessionEnd"]))
+
     def test_marketplace_points_to_packaged_plugin(self):
         marketplace = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())
         self.assertEqual(marketplace["name"], "yantrikdb-chatgpt")

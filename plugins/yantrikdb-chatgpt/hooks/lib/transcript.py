@@ -33,14 +33,52 @@ _META_SPANS = re.compile(
     r".*?</\1>",
     re.S,
 )
+_PASTED_SPANS = re.compile(r"<pasted_content\b[^>]*>.*?</pasted_content\b[^>]*>", re.S)
+# Harness-authored turns that arrive with role=user. Drafted into memory they
+# became the most-recalled records of a real store (one was injected 73 times).
+_BOILERPLATE_PREFIXES = (
+    "This session is being continued from a previous conversation",
+    "Resume directly",
+    "[ASYNC DELEGATION",
+    "Delegated task:",
+    "[Request interrupted by user",
+)
+_HEADLESS_ORIGINATORS = ("codex_exec",)
 
 
 def is_meta(text: str) -> bool:
-    return text.lstrip().startswith(_META_PREFIXES)
+    stripped = text.lstrip()
+    return stripped.startswith(_META_PREFIXES) or stripped.startswith(_BOILERPLATE_PREFIXES)
 
 
 def clean_text(text: str) -> str:
-    return " ".join(_META_SPANS.sub(" ", text or "").split())
+    text = _PASTED_SPANS.sub(" ", _META_SPANS.sub(" ", text or ""))
+    return " ".join(text.split())
+
+
+def is_headless(path: str | None) -> bool:
+    """True for `codex exec` and SDK-driven runs, whose prompts are machine
+    briefs rather than anything the user said."""
+    if not path:
+        return False
+    try:
+        with Path(path).open("rb") as handle:
+            for _ in range(20):
+                line = handle.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    continue
+                payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+                if record.get("type") == "session_meta":
+                    return str(payload.get("originator") or "") in _HEADLESS_ORIGINATORS
+                if record.get("entrypoint"):
+                    return str(record["entrypoint"]).startswith("sdk")
+    except Exception:
+        return False
+    return False
 
 
 def _blocks_text(content, kinds: list[str] | None = None, role: str = "") -> str:
@@ -82,7 +120,7 @@ def _codex_turn(record: dict) -> tuple[str, str] | None:
 
 
 def _legacy_turn(record: dict) -> tuple[str, str] | None:
-    if record.get("isMeta") or record.get("isSidechain"):
+    if record.get("isMeta") or record.get("isSidechain") or record.get("isCompactSummary"):
         return None
     message = record.get("message")
     if isinstance(message, dict):

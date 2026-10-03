@@ -102,6 +102,23 @@ class RuntimeTests(unittest.TestCase):
                 self.ydb.adopt_mcp_env(str(root))
                 self.assertEqual(os.environ["YANTRIKDB_SERVER_URL"], "http://project:7438")
 
+    def test_user_codex_config_is_adopted_by_default(self):
+        with sandbox() as root:
+            config = root / "home" / ".codex" / "config.toml"
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text('[mcp_servers.yantrikdb.env]\nYANTRIKDB_SERVER_URL = "http://nas:7438"\n'
+                              'YANTRIKDB_TOKEN = "ydb_test"\n')
+            clear = dict(PLUGIN_ROOT=None, CLAUDE_PLUGIN_ROOT=None, YANTRIKDB_SERVER_URL=None,
+                         YANTRIKDB_TOKEN=None, YANTRIKDB_HOOKS_ADOPT_MCP_ENV=None,
+                         YANTRIKDB_HOOKS_ADOPT_PROJECT_MCP_ENV=None, YANTRIKDB_HOOKS_ADOPT_USER_MCP_ENV=None)
+            with env(**clear):
+                self.ydb.adopt_mcp_env(str(root))
+                self.assertEqual(os.environ.get("YANTRIKDB_SERVER_URL"), "http://nas:7438")
+                self.assertEqual(os.environ.get("YANTRIKDB_TOKEN"), "ydb_test")
+            with env(**{**clear, "YANTRIKDB_HOOKS_ADOPT_USER_MCP_ENV": "0"}):
+                self.ydb.adopt_mcp_env(str(root))
+                self.assertNotIn("YANTRIKDB_SERVER_URL", os.environ)
+
     def test_unreachable_marker_is_url_specific(self):
         with sandbox(), env(YANTRIKDB_HOOKS_UNREACHABLE_TTL="60"):
             self.ydb.mark_cluster_down("http://one:7438")

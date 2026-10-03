@@ -46,6 +46,38 @@ class TranscriptTests(unittest.TestCase):
             captured = self.transcript.lines(str(path))
         self.assertEqual(captured, ["Keep the API flag names stable."])
 
+    def test_harness_boilerplate_and_pastes_are_not_user_facts(self):
+        def user(text):
+            return {"type": "response_item", "payload": {
+                "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}],
+                "internal_chat_message_metadata_passthrough": {"content_item_kinds": ["user.text"]}}}
+        rows = [
+            user("Delegated task: Map the existing bridge repository APIs necessary for the coordinator."),
+            user("[ASYNC DELEGATION COMPLETE — deleg_2e405667] A background subagent has finished."),
+            {"type": "user", "isCompactSummary": True, "message": {"role": "user", "content":
+                "This session is being continued from a previous conversation that ran out of context."}},
+            user("Use the staging VM for the load test.\n<pasted_content id=\"ab12\">\nERROR a long log dump\n"
+                 "</pasted_content id=\"ab12\">"),
+        ]
+        with sandbox() as root:
+            path = root / "rollout.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows))
+            text = "\n".join(self.transcript.lines(str(path)))
+        self.assertIn("staging VM", text)
+        for noise in ("Delegated task", "ASYNC DELEGATION", "continued from a previous", "long log dump"):
+            self.assertNotIn(noise, text)
+
+    def test_exec_and_sdk_sessions_are_headless(self):
+        with sandbox() as root:
+            exec_run, desktop, sdk = root / "exec.jsonl", root / "desktop.jsonl", root / "sdk.jsonl"
+            exec_run.write_text(json.dumps({"type": "session_meta", "payload": {"originator": "codex_exec"}}) + "\n")
+            desktop.write_text(json.dumps({"type": "session_meta", "payload": {"originator": "Codex Desktop"}}) + "\n")
+            sdk.write_text(json.dumps({"type": "user", "entrypoint": "sdk-py"}) + "\n")
+            self.assertTrue(self.transcript.is_headless(str(exec_run)))
+            self.assertFalse(self.transcript.is_headless(str(desktop)))
+            self.assertTrue(self.transcript.is_headless(str(sdk)))
+            self.assertFalse(self.transcript.is_headless(None))
+
     def test_missing_file_is_empty(self):
         self.assertEqual(self.transcript.lines(None), [])
         self.assertEqual(self.transcript.lines("/does/not/exist"), [])

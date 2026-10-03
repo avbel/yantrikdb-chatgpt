@@ -43,7 +43,6 @@
     ],
     "SessionEnd": [
       {
-        "matcher": "other",
         "hooks": [
           {
             "type": "command",

@@ -59,11 +59,13 @@ The hooks mirror the MCP server's backend selection:
 - Otherwise: use the embedded database at `YANTRIKDB_DB_PATH` (default
   `~/.yantrikdb/memory.db`).
 
-Set backend variables in the environment that launches Codex or ChatGPT so the
-bundled MCP server and hooks inherit identical values. For development against
-an external MCP definition, hooks can also adopt `YANTRIKDB_*` values from the
-plugin `.mcp.json`. Project and user MCP configs require separate opt-ins;
-explicit environment values always win.
+Codex does not pass an MCP server's `env` table to hooks, so the hooks adopt
+missing `YANTRIKDB_*` values from the plugin `.mcp.json` and then from the
+`yantrikdb` entry of your own `~/.codex/config.toml` (on by default). Without
+that, hooks silently opened a separate embedded store while the MCP tools used
+the cluster. Project-level MCP configs stay opt-in, because a repository must
+not be able to redirect globally installed memory hooks; explicit environment
+values always win.
 
 Example:
 
@@ -84,21 +86,28 @@ Plugin hooks are intentionally not trusted automatically.
 | `YANTRIKDB_HOOKS_NAMESPACE` | `default` | Memory namespace. `auto` derives it from the Git origin or project path. Keep `default` when explicit MCP calls do not pass a project namespace. |
 | `YANTRIKDB_HOOKS_ADOPT_MCP_ENV` | `1` | Adopt missing `YANTRIKDB_*` values from nearby MCP configuration. |
 | `YANTRIKDB_HOOKS_ADOPT_PROJECT_MCP_ENV` | `0` | Also read `<cwd>/.mcp.json` and `<cwd>/.codex/config.toml`. Enable only for trusted projects. |
-| `YANTRIKDB_HOOKS_ADOPT_USER_MCP_ENV` | `0` | Also read the external `yantrikdb` entry in `~/.codex/config.toml`. |
+| `YANTRIKDB_HOOKS_ADOPT_USER_MCP_ENV` | `1` | Also read the external `yantrikdb` entry in `~/.codex/config.toml`. |
 | `YANTRIKDB_HOOKS_MCP_SERVER` | `yantrikdb` | MCP entry name used during config adoption. |
 | `YANTRIKDB_HOOKS_CLIENT_ID` | derived | Tracked-session client id; defaults to `codex-<session-id>`. |
 | `YANTRIKDB_HOOKS_DIGEST` | `1` | Inject the boot digest on startup, resume, and clear. |
-| `YANTRIKDB_HOOKS_GAPS` | `1` | Include known gaps when supported by the HTTP backend. |
+| `YANTRIKDB_HOOKS_GAPS` | follows `DIGEST_MAINTENANCE` | Include known gaps when supported by the HTTP backend. |
 | `YANTRIKDB_HOOKS_FALLBACK` | `1` | Inject recent records when the digest is empty. |
 | `YANTRIKDB_HOOKS_RECENT` | `6` | Maximum recent records in the fallback. |
 | `YANTRIKDB_HOOKS_TRACK_SESSION` | `1` | Open and close a YantrikDB session. |
 | `YANTRIKDB_HOOKS_RECALL` | `1` | Recall before substantive user prompts. |
-| `YANTRIKDB_HOOKS_TOP_K` | `5` | Maximum recall hits per prompt. |
+| `YANTRIKDB_HOOKS_TOP_K` | `3` | Maximum recall hits per prompt. |
+| `YANTRIKDB_HOOKS_CANDIDATES` | `10` | Hits fetched before the relevance gate. |
+| `YANTRIKDB_HOOKS_MIN_SIMILARITY` | `0.60` | Semantic-lane cosine (from `why_retrieved`) an injected hit needs; keyword/graph-only hits are dropped. `0` disables the gate. |
+| `YANTRIKDB_HOOKS_EXCLUDE_NAMESPACES` | — | Comma-separated namespace prefixes never injected, e.g. `hermes:`. |
+| `YANTRIKDB_HOOKS_RECALL_CAPTURED` | follows `CAPTURE` | Inject auto-captured prompts and merges made of them. |
+| `YANTRIKDB_HOOKS_DIGEST_DECISIONS` | `5` | Max live decisions in the boot digest. |
+| `YANTRIKDB_HOOKS_DIGEST_MAINTENANCE` | `0` | Also show conflicts, triggers and known gaps in the digest. |
 | `YANTRIKDB_HOOKS_MIN_SCORE` | `0.10` | Absolute score floor for injected hits. |
 | `YANTRIKDB_HOOKS_MIN_PROMPT_CHARS` | `24` | Skip shorter prompts and slash commands. |
 | `YANTRIKDB_HOOKS_RECORD_TURNS` | `1` | Mirror redacted user prompts into the embedded working-memory ring. |
 | `YANTRIKDB_HOOKS_RING_SIZE` | `20` | Working-memory ring size. |
-| `YANTRIKDB_HOOKS_CAPTURE` | `1` | Draft memories at compaction and session end. |
+| `YANTRIKDB_HOOKS_CAPTURE` | `0` | Draft memories from user turns at compaction and session end. |
+| `YANTRIKDB_HOOKS_DETACH_SESSION_END` | `1` | Run `SessionEnd` work in a detached child (Codex clamps that hook to 3 s). |
 | `YANTRIKDB_HOOKS_CAPTURE_ROLES` | `user` | Capture `user` turns only, or `all` to include assistant text. |
 | `YANTRIKDB_HOOKS_CAPTURE_TURNS` | `40` | Maximum transcript turns considered. |
 | `YANTRIKDB_HOOKS_CAPTURE_CHARS` | `6000` | Maximum drafted transcript characters. |
@@ -116,6 +125,17 @@ Plugin hooks are intentionally not trusted automatically.
 - Every failure path is fail-open: hooks exit successfully without protocol
   output instead of blocking the conversation.
 - Recalled text is labeled as untrusted background context, not instructions.
+- Recall is gated: auto-captured prompts, consolidation merges made only of them
+  (relabeled `source=user` by the engine), optionally excluded namespaces and
+  hits without a semantic match (similarity < 0.60, calibrated for the bundled
+  64-dim embedder) are never injected. Over HTTP the hooks query `/v1/recall`
+  directly because the `yantrikdb-mcp` client drops `source`, `namespace` and
+  `metadata` from recall rows.
+- Capture is opt-in: drafts stayed near-verbatim prompts and dominated the store.
+  When enabled, `codex exec` / SDK runs, compaction summaries, harness notices
+  and pasted blocks are skipped.
+- `SessionEnd` returns immediately and finishes in a detached child, because
+  Codex clamps that hook to 3 s.
 - Capture defaults to user-authored text. Persisting assistant claims by default
   would turn guesses into future "facts."
 - Codex-injected `AGENTS.md` and environment-context transcript records are
