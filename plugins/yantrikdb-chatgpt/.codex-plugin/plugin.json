@@ -1,6 +1,6 @@
 {
   "name": "yantrikdb-chatgpt",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Persistent YantrikDB memory for Codex and ChatGPT through MCP and lifecycle hooks.",
   "author": {
     "name": "Andrey Belchikov",

@@ -97,7 +97,7 @@ Plugin hooks are intentionally not trusted automatically.
 | `YANTRIKDB_HOOKS_RECALL` | `1` | Recall before substantive user prompts. |
 | `YANTRIKDB_HOOKS_TOP_K` | `3` | Maximum recall hits per prompt. |
 | `YANTRIKDB_HOOKS_CANDIDATES` | `10` | Hits fetched before the relevance gate. |
-| `YANTRIKDB_HOOKS_MIN_SIMILARITY` | `0.60` | Semantic-lane cosine (from `why_retrieved`) an injected hit needs; keyword/graph-only hits are dropped. `0` disables the gate. |
+| `YANTRIKDB_HOOKS_MIN_SIMILARITY` | `0.50` | Semantic-lane cosine (from `why_retrieved`) an injected hit needs; keyword/graph-only hits are dropped. `0` disables the gate. |
 | `YANTRIKDB_HOOKS_EXCLUDE_NAMESPACES` | — | Comma-separated namespace prefixes never injected, e.g. `hermes:`. |
 | `YANTRIKDB_HOOKS_RECALL_CAPTURED` | follows `CAPTURE` | Inject auto-captured prompts and merges made of them. |
 | `YANTRIKDB_HOOKS_DIGEST_DECISIONS` | `5` | Max live decisions in the boot digest. |
@@ -127,10 +127,10 @@ Plugin hooks are intentionally not trusted automatically.
 - Recalled text is labeled as untrusted background context, not instructions.
 - Recall is gated: auto-captured prompts, consolidation merges made only of them
   (relabeled `source=user` by the engine), optionally excluded namespaces and
-  hits without a semantic match (similarity < 0.60, calibrated for the bundled
-  64-dim embedder) are never injected. Over HTTP the hooks query `/v1/recall`
-  directly because the `yantrikdb-mcp` client drops `source`, `namespace` and
-  `metadata` from recall rows.
+  hits without a semantic match (similarity < 0.50 on MiniLM-384; use about
+  0.60 with the bundled 64-dim embedder) are never injected. Over HTTP the
+  hooks query `/v1/recall` directly because the `yantrikdb-mcp` client drops
+  `source`, `namespace` and `metadata` from recall rows.
 - Capture is opt-in: drafts stayed near-verbatim prompts and dominated the store.
   When enabled, `codex exec` / SDK runs, compaction summaries, harness notices
   and pasted blocks are skipped.
